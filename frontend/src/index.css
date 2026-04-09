@@ -1,7 +1,70 @@
 @import "tailwindcss";
 
+@theme {
+  --color-surface-container-highest: #333539;
+  --color-outline: #8c90a1;
+  --color-on-secondary-container: #004d1b;
+  --color-primary: #b0c6ff;
+  --color-inverse-on-surface: #2f3035;
+  --color-secondary-container: #02c953;
+  --color-surface-bright: #37393e;
+  --color-error-container: #93000a;
+  --color-on-tertiary-container: #002f35;
+  --color-outline-variant: #424655;
+  --color-primary-fixed: #d9e2ff;
+  --color-surface-container: #1e2024;
+  --color-on-primary-fixed: #001945;
+  --color-surface: #111318;
+  --color-secondary-fixed: #69ff87;
+  --color-surface-dim: #111318;
+  --color-primary-container: #568dff;
+  --color-on-primary-container: #002661;
+  --color-surface-container-lowest: #0c0e12;
+  --color-on-tertiary-fixed-variant: #004f58;
+  --color-on-primary-fixed-variant: #00429c;
+  --color-surface-container-low: #1a1c20;
+  --color-surface-variant: #333539;
+  --color-error: #ffb4ab;
+  --color-tertiary: #00daf3;
+  --color-on-background: #e2e2e8;
+  --color-inverse-primary: #0058cb;
+  --color-tertiary-fixed: #9cf0ff;
+  --color-tertiary-container: #009fb2;
+  --color-on-error-container: #ffdad6;
+  --color-on-surface-variant: #c2c6d8;
+  --color-inverse-surface: #e2e2e8;
+  --color-tertiary-fixed-dim: #00daf3;
+  --color-on-secondary: #003912;
+  --color-on-surface: #e2e2e8;
+  --color-primary-fixed-dim: #b0c6ff;
+  --color-on-secondary-fixed-variant: #00531e;
+  --color-secondary: #40e56c;
+  --color-on-primary: #002d6f;
+  --color-surface-container-high: #282a2e;
+  --color-background: #111318;
+  --color-surface-tint: #b0c6ff;
+  --color-on-tertiary: #00363d;
+  --color-on-error: #690005;
+  --color-secondary-fixed-dim: #3ce36a;
+  --color-on-tertiary-fixed: #001f24;
+  --color-on-secondary-fixed: #002108;
+
+  --font-headline: "Inter";
+  --font-body: "Inter";
+  --font-label: "Inter";
+}
+
 @layer base {
   body {
-    @apply bg-slate-900 text-slate-100 antialiased font-sans;
+    @apply bg-surface text-on-surface selection:bg-primary selection:text-on-primary antialiased font-body;
   }
+}
+
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+}
+
+.glass-panel {
+  background: rgba(51, 53, 57, 0.4);
+  backdrop-filter: blur(16px);
 }

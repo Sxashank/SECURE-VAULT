@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { Lock, Mail, ShieldAlert, Eye, EyeOff, User, Users } from 'lucide-react';
+import { Lock, Mail, ShieldAlert, Eye, EyeOff, User } from 'lucide-react';
 
 const EmailInput = ({ email, setEmail }: any) => (
     <div className="relative">
