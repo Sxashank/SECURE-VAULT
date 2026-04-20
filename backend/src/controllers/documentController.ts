@@ -115,3 +115,45 @@ export const getDocuments = async (req: AuthRequest, res: Response): Promise<voi
         res.status(500).json({ message: 'Error fetching documents' });
     }
 };
+
+export const deleteDocument = async (req: AuthRequest, res: Response): Promise<void> => {
+    const documentId = req.params.id;
+    const userId = req.user?.id;
+    const roleName = req.user?.role_name;
+
+    try {
+        // Validation: Must be ADMIN, the UPLOADER, or have DELETE permission
+        if (roleName !== 'ADMIN') {
+            const checkRes = await pool.query(`
+                SELECT uploaded_by FROM documents WHERE id = $1
+            `, [documentId]);
+            
+            if (checkRes.rows.length === 0) {
+                res.status(404).json({ message: 'Document not found' });
+                return;
+            }
+
+            const isUploader = checkRes.rows[0].uploaded_by === userId;
+            
+            if (!isUploader) {
+                const permRes = await pool.query(`
+                    SELECT 1 FROM document_permissions 
+                    WHERE document_id = $1 AND user_id = $2 AND access_type = 'DELETE'
+                `, [documentId, userId]);
+                
+                if (permRes.rows.length === 0) {
+                    res.status(403).json({ message: 'Forbidden' });
+                    return;
+                }
+            }
+        }
+
+        await pool.query('DELETE FROM documents WHERE id = $1', [documentId]);
+        await logAction(userId, 'DOC_DELETE', `doc_${documentId}`, req.ip || 'unknown');
+        
+        res.json({ message: 'Document deleted successfully' });
+    } catch (err) {
+        console.error("DELETE ERROR:", err);
+        res.status(500).json({ message: 'Error deleting document' });
+    }
+};

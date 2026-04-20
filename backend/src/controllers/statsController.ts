@@ -31,7 +31,7 @@ export const getDashboardStats = async (req: AuthRequest, res: Response): Promis
             docsParams.push(teamId);
             if (roleName !== 'MANAGER') {
                 docsParams.push(userId);
-                docsQuery += ' AND (target_user_id IS NULL OR target_user_id = $2)';
+                docsQuery += ' AND (uploaded_by = $2 OR is_public_to_team = true OR id IN (SELECT document_id FROM document_permissions WHERE user_id = $2))';
             }
         }
         const docsRes = await pool.query(docsQuery, docsParams);
@@ -45,7 +45,7 @@ export const getDashboardStats = async (req: AuthRequest, res: Response): Promis
             catParams.push(teamId);
             if (roleName !== 'MANAGER') {
                 catParams.push(userId);
-                catQuery += ' AND (target_user_id IS NULL OR target_user_id = $2)';
+                catQuery += ' AND (uploaded_by = $2 OR is_public_to_team = true OR id IN (SELECT document_id FROM document_permissions WHERE user_id = $2))';
             }
         }
         catQuery += ' GROUP BY category';

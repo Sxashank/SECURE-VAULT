@@ -34,9 +34,13 @@ const createDatabaseIfNotExists = async () => {
 };
 
 const initializeDatabase = async () => {
-    await createDatabaseIfNotExists();
+    // If using a cloud provider (DATABASE_URL is set), the database itself is typically pre-created.
+    // If running locally with raw host/user/pass, automatically create it.
+    if (!process.env.DATABASE_URL) {
+        await createDatabaseIfNotExists();
+    }
 
-    console.log('Connecting to', process.env.DB_NAME);
+    console.log('Connecting to', process.env.DB_NAME || 'Cloud Database');
     const schemaSql = fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf-8');
 
     try {

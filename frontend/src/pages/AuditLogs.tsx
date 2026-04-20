@@ -1,72 +1,99 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
-import { Activity, ArrowLeft } from 'lucide-react';
+import { OfficeBg, Badge, SectionHead } from '../components/ui';
 
 export default function AuditLogs() {
-    const [logs, setLogs] = useState([]);
-    const navigate = useNavigate();
+  const [logs, setLogs] = useState([]);
+  const navigate = useNavigate();
 
-    useEffect(() => {
-        const token = localStorage.getItem('token');
-        const role = localStorage.getItem('userRole');
-        if (!token || role !== 'ADMIN') {
-            navigate('/dashboard');
-            return;
-        }
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const role  = localStorage.getItem('userRole');
+    if (!token || role !== 'ADMIN') { navigate('/dashboard'); return; }
+    axios.get('http://127.0.0.1:5001/api/audit', { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => setLogs(r.data.logs)).catch(console.error);
+  }, [navigate]);
 
-        axios.get('http://127.0.0.1:5000/api/audit', {
-            headers: { Authorization: `Bearer ${token}` }
-        }).then(res => setLogs(res.data.logs)).catch(console.error);
-    }, [navigate]);
+  const isError = (action: string) => action.includes('FAILED') || action.includes('ERROR');
 
-    return (
-        <div className="min-h-screen bg-slate-950 p-8">
-            <div className="max-w-7xl mx-auto space-y-8">
-                <header className="flex items-center gap-4">
-                    <button onClick={() => navigate('/dashboard')} className="p-2 bg-slate-800 text-slate-300 rounded-lg hover:bg-slate-700 transition">
-                        <ArrowLeft size={20} />
-                    </button>
-                    <div>
-                        <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-                            <Activity className="text-cyan-500" />
-                            System Audit Logs
-                        </h1>
-                        <p className="text-slate-400 mt-1">Immutable record of all system events</p>
-                    </div>
-                </header>
+  return (
+    <div className="min-h-screen p-8 relative" style={{ background: 'var(--bg)' }}>
+      <OfficeBg />
+      <div className="max-w-7xl mx-auto relative z-10 space-y-8">
 
-                <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm">
-                            <thead className="bg-slate-900/80 text-slate-400">
-                                <tr>
-                                    <th className="px-6 py-4 font-medium">Timestamp</th>
-                                    <th className="px-6 py-4 font-medium">Action</th>
-                                    <th className="px-6 py-4 font-medium">User Email</th>
-                                    <th className="px-6 py-4 font-medium">IP Address</th>
-                                    <th className="px-6 py-4 font-medium">Resource ID</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-800/60">
-                                {logs.map((log: any) => (
-                                    <tr key={log.id} className="hover:bg-slate-800/30 transition-colors">
-                                        <td className="px-6 py-4 text-slate-400">{new Date(log.timestamp).toLocaleString()}</td>
-                                        <td className="px-6 py-4">
-                                            <span className={`px-2 py-1 rounded text-xs font-medium ${log.action.includes('FAILED') || log.action.includes('ERROR') ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                                                {log.action}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 text-slate-300">{log.user_email || 'System / Unauth'}</td>
-                                        <td className="px-6 py-4 text-slate-400 font-mono text-xs">{log.ip_address}</td>
-                                        <td className="px-6 py-4 text-slate-500 font-mono text-xs">{log.resource_id || '-'}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+        <header className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <button onClick={() => navigate('/dashboard')} className="btn-secondary px-3 py-2.5 text-sm">
+              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+            </button>
+            <div>
+              <h1 className="text-3xl font-black" style={{ fontFamily: 'var(--font-display)', color: 'var(--text)' }}>Audit Logs</h1>
+              <p className="text-sm" style={{ color: 'var(--muted)' }}>Immutable record of all system events</p>
             </div>
+          </div>
+          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--divider)' }}>
+            <div className="live-dot" />
+            <span className="text-sm font-semibold" style={{ color: 'var(--green)' }}>Live</span>
+            <span className="text-sm" style={{ color: 'var(--muted)' }}>{logs.length} events</span>
+          </div>
+        </header>
+
+        {/* Summary chips */}
+        <div className="flex gap-3">
+          {[
+            { label: 'Total Events', val: logs.length, color: 'orange' },
+            { label: 'Errors', val: logs.filter((l: any) => isError(l.action)).length, color: 'red' },
+            { label: 'Success', val: logs.filter((l: any) => !isError(l.action)).length, color: 'green' },
+          ].map(({ label, val, color }) => (
+            <div key={label} className="office-card px-5 py-3 flex items-center gap-3">
+              <span className="text-xl font-black" style={{ fontFamily: 'var(--font-display)', color: `var(--${color})` }}>{val}</span>
+              <span className="text-sm" style={{ color: 'var(--muted)' }}>{label}</span>
+            </div>
+          ))}
         </div>
-    );
+
+        <div className="office-card overflow-hidden">
+          <div className="h-1 flex">
+            {['var(--orange)','var(--amber)','var(--green)','var(--teal)','var(--red)'].map((c, i) => (
+              <div key={i} className="flex-1" style={{ background: c }} />
+            ))}
+          </div>
+          <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--divider)' }}>
+            <SectionHead>Event Stream</SectionHead>
+          </div>
+          <table className="w-full text-left">
+            <thead style={{ background: 'var(--surface3)' }}>
+              <tr>
+                {['Timestamp','Action','User','IP Address','Resource'].map(h => (
+                  <th key={h} className="px-6 py-3 text-[10px] font-bold uppercase tracking-widest" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)', borderBottom: '1px solid var(--divider)' }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {logs.length === 0 ? (
+                <tr><td colSpan={5} className="px-6 py-16 text-center">
+                  <span className="material-symbols-outlined text-5xl block mb-3" style={{ color: 'var(--muted2)' }}>receipt_long</span>
+                  <p className="text-sm font-medium" style={{ color: 'var(--muted)' }}>No events recorded yet</p>
+                </td></tr>
+              ) : logs.map((log: any) => (
+                <tr key={log.id} className="tr-row transition-colors" style={{ borderBottom: '1px solid var(--divider)' }}>
+                  <td className="px-6 py-4 text-xs" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
+                    {new Date(log.timestamp).toLocaleString()}
+                  </td>
+                  <td className="px-6 py-4">
+                    <Badge color={isError(log.action) ? 'red' : 'green'}>{log.action}</Badge>
+                  </td>
+                  <td className="px-6 py-4 text-sm font-medium" style={{ color: 'var(--text2)' }}>{log.user_email || 'System'}</td>
+                  <td className="px-6 py-4 text-xs" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>{log.ip_address}</td>
+                  <td className="px-6 py-4 text-xs" style={{ color: 'var(--muted2)', fontFamily: 'var(--font-mono)' }}>{log.resource_id || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+  );
 }
