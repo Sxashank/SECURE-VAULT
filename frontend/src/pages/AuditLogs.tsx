@@ -1,19 +1,34 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { useAuth, useClerk } from '@clerk/clerk-react';
 import { OfficeBg, Badge, SectionHead } from '../components/ui';
 
 export default function AuditLogs() {
   const [logs, setLogs] = useState([]);
   const navigate = useNavigate();
+  const { getToken } = useAuth();
+  const { signOut } = useClerk();
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate('/auth');
+  };
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    const role  = localStorage.getItem('userRole');
-    if (!token || role !== 'ADMIN') { navigate('/dashboard'); return; }
-    axios.get('http://127.0.0.1:5001/api/audit', { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => setLogs(r.data.logs)).catch(console.error);
-  }, [navigate]);
+    const fetchLogs = async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const r = await axios.get('http://127.0.0.1:5001/api/audit', { headers: { Authorization: `Bearer ${token}` } });
+        setLogs(r.data.logs);
+      } catch (err) {
+        console.error(err);
+        navigate('/dashboard');
+      }
+    };
+    fetchLogs();
+  }, [navigate, getToken]);
 
   const isError = (action: string) => action.includes('FAILED') || action.includes('ERROR');
 
@@ -32,10 +47,16 @@ export default function AuditLogs() {
               <p className="text-sm" style={{ color: 'var(--muted)' }}>Immutable record of all system events</p>
             </div>
           </div>
-          <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--divider)' }}>
-            <div className="live-dot" />
-            <span className="text-sm font-semibold" style={{ color: 'var(--green)' }}>Live</span>
-            <span className="text-sm" style={{ color: 'var(--muted)' }}>{logs.length} events</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--divider)' }}>
+              <div className="live-dot" />
+              <span className="text-sm font-semibold" style={{ color: 'var(--green)' }}>Live</span>
+              <span className="text-sm" style={{ color: 'var(--muted)' }}>{logs.length} events</span>
+            </div>
+            <button onClick={handleLogout} className="btn-secondary px-4 py-2.5 text-sm flex items-center gap-2" style={{ color: 'var(--red)', borderColor: 'var(--red)' }}>
+              <span className="material-symbols-outlined text-[18px]">logout</span>
+              Logout
+            </button>
           </div>
         </header>
 

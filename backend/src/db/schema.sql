@@ -31,9 +31,10 @@ CREATE TABLE IF NOT EXISTS teams (
 
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
+  clerk_id VARCHAR(255) UNIQUE,
   full_name VARCHAR(255) NOT NULL,
   email VARCHAR(255) UNIQUE NOT NULL,
-  password_hash VARCHAR(255) NOT NULL,
+  password_hash VARCHAR(255),
   role_id INT REFERENCES roles(id),
   team_id INT REFERENCES teams(id) ON DELETE SET NULL,
   department_id INT REFERENCES departments(id) ON DELETE SET NULL,

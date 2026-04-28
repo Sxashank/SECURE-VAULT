@@ -7,6 +7,8 @@ import auditRoutes from './routes/auditRoutes';
 import statsRoutes from './routes/statsRoutes';
 import userRoutes from './routes/userRoutes';
 
+import { clerkMiddleware } from '@clerk/express';
+
 dotenv.config();
 
 const app: Express = express();
@@ -14,6 +16,7 @@ const port = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
+app.use(clerkMiddleware());
 
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);

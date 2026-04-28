@@ -1,23 +1,39 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { useAuth, useClerk } from '@clerk/clerk-react';
 import { OfficeBg, Badge, SectionHead } from '../components/ui';
 
 export default function TeamInsights() {
   const [insights, setInsights]   = useState<any[]>([]);
   const [suspicious, setSuspicious] = useState<any[]>([]);
   const navigate = useNavigate();
+  const { getToken } = useAuth();
+  const { signOut } = useClerk();
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate('/auth');
+  };
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
-    Promise.all([
-      axios.get('http://127.0.0.1:5001/api/audit/team',      { headers: { Authorization: `Bearer ${token}` } }),
-      axios.get('http://127.0.0.1:5001/api/audit/suspicious', { headers: { Authorization: `Bearer ${token}` } }),
-    ]).then(([i, s]) => {
-      setInsights(i.data.insights || []);
-      setSuspicious(s.data.alerts || []);
-    }).catch(console.error);
-  }, []);
+    const fetchData = async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+        const [i, s] = await Promise.all([
+          axios.get('http://127.0.0.1:5001/api/audit/team',      { headers: { Authorization: `Bearer ${token}` } }),
+          axios.get('http://127.0.0.1:5001/api/audit/suspicious', { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        setInsights(i.data.insights || []);
+        setSuspicious(s.data.alerts || []);
+      } catch (err) {
+        console.error(err);
+        navigate('/dashboard');
+      }
+    };
+    fetchData();
+  }, [getToken, navigate]);
 
   const avatarColors = ['#ea580c','#059669','#d97706','#0d9488','#dc2626','#92400e'];
 
@@ -33,10 +49,16 @@ export default function TeamInsights() {
             <h1 className="text-3xl font-black" style={{ fontFamily: 'var(--font-display)', color: 'var(--text)' }}>Team Insights</h1>
             <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>Forensic analysis and live activity streams for your team</p>
           </div>
-          <button onClick={() => navigate('/dashboard')} className="btn-secondary px-4 py-2.5 text-sm">
-            <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-            Back to Dashboard
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => navigate('/dashboard')} className="btn-secondary px-4 py-2.5 text-sm">
+              <span className="material-symbols-outlined text-[18px]">arrow_back</span>
+              Back to Dashboard
+            </button>
+            <button onClick={handleLogout} className="btn-secondary px-4 py-2.5 text-sm flex items-center gap-2" style={{ color: 'var(--red)', borderColor: 'var(--red)' }}>
+              <span className="material-symbols-outlined text-[18px]">logout</span>
+              Logout
+            </button>
+          </div>
         </header>
 
         {/* Summary row */}

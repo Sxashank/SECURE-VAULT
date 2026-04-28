@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { useUser, useAuth, useClerk } from '@clerk/clerk-react';
 import { OfficeBg, Badge, StatCard, SectionHead } from '../components/ui';
 
 export default function Dashboard() {
@@ -16,35 +17,55 @@ export default function Dashboard() {
   const [assignedUsers, setAssignedUsers] = useState<any[]>([]);
   const [joinCode, setJoinCode]   = useState('');
   const navigate = useNavigate();
-  const role     = localStorage.getItem('userRole');
-  const userName = localStorage.getItem('userName');
+
+  const { user } = useUser();
+  const { getToken } = useAuth();
+  const { signOut } = useClerk();
+
+  const handleLogout = async () => {
+    await signOut();
+    navigate('/auth');
+  };
+  
+  // Local state for synced DB user data (role, etc)
+  const [localUser, setLocalUser] = useState<any>(null);
 
   useEffect(() => {
     if (!searchQuery) { setSearchResults([]); return; }
     const t = setTimeout(async () => {
       try {
-        const token = localStorage.getItem('token');
+        const token = await getToken();
         const r = await axios.get(`http://127.0.0.1:5001/api/users/search?q=${searchQuery}`, { headers: { Authorization: `Bearer ${token}` } });
         setSearchResults(r.data.users);
       } catch {}
     }, 300);
     return () => clearTimeout(t);
-  }, [searchQuery]);
+  }, [searchQuery, getToken]);
 
-  const fetchData = async () => {
-    const token = localStorage.getItem('token');
-    if (!token) { navigate('/auth'); return; }
-    try {
-      const [docR, statR] = await Promise.all([
-        axios.get('http://127.0.0.1:5001/api/documents', { headers: { Authorization: `Bearer ${token}` } }),
-        axios.get('http://127.0.0.1:5001/api/stats/dashboard', { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
-      setDocuments(docR.data.documents);
-      setStats(statR.data);
-    } catch (e) { console.error(e); }
-  };
+  useEffect(() => {
+    if (!user) return; // Wait for Clerk to load the user object
 
-  useEffect(() => { fetchData(); }, []);
+    const fetchData = async () => {
+      try {
+        const token = await getToken();
+        if (!token) return;
+
+        const [docR, statR] = await Promise.all([
+          axios.get('http://127.0.0.1:5001/api/documents', { headers: { Authorization: `Bearer ${token}` } }),
+          axios.get('http://127.0.0.1:5001/api/stats/dashboard', { headers: { Authorization: `Bearer ${token}` } }),
+        ]);
+        setDocuments(docR.data.documents);
+        setStats(statR.data);
+        if (statR.data.user) {
+          setLocalUser(statR.data.user);
+        }
+      } catch (e) {
+        console.error('Dashboard Fetch Error:', e);
+      }
+    };
+
+    fetchData();
+  }, [user, getToken]);
 
   const addUser = (u: any, access: string) => {
     if (!assignedUsers.find(x => x.id === u.id)) setAssignedUsers([...assignedUsers, { id: u.id, name: u.full_name, access }]);
@@ -54,9 +75,8 @@ export default function Dashboard() {
   const handleJoinTeam = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const token = localStorage.getItem('token');
+      const token = await getToken();
       const r = await axios.post('http://127.0.0.1:5001/api/auth/join-team', { teamCode: joinCode }, { headers: { Authorization: `Bearer ${token}` } });
-      localStorage.setItem('token', r.data.token);
       setJoinCode(''); fetchData();
       alert(`Joined ${r.data.teamName}!`);
     } catch (err: any) { alert(err.response?.data?.message || 'Failed'); }
@@ -65,7 +85,7 @@ export default function Dashboard() {
   const handleUpload = async (e: any) => {
     e.preventDefault();
     try {
-      const token = localStorage.getItem('token');
+      const token = await getToken();
       await axios.post('http://127.0.0.1:5001/api/documents/upload', {
         title: newTitle || selectedFile?.name || 'Untitled',
         encrypted_path: 'vault/' + Date.now() + '_' + (selectedFile?.name || 'file.enc'),
@@ -78,7 +98,7 @@ export default function Dashboard() {
   const handleDelete = async (id: number) => {
     if (!window.confirm('Are you sure you want to delete this document?')) return;
     try {
-      const token = localStorage.getItem('token');
+      const token = await getToken();
       await axios.delete(`http://127.0.0.1:5001/api/documents/${id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -89,6 +109,9 @@ export default function Dashboard() {
   };
 
   const sel = "office-input px-4 py-3 text-sm appearance-none";
+
+  const role     = localUser?.role_name || 'USER';
+  const userName = user?.fullName || 'User';
 
   const navItems = [
     { icon: 'dashboard', label: 'Dashboard', path: '/dashboard', active: true },
@@ -137,16 +160,19 @@ export default function Dashboard() {
             <div className="w-9 h-9 rounded-xl flex items-center justify-center font-black text-sm text-white" style={{ background: 'linear-gradient(135deg, var(--orange), var(--amber))' }}>
               {userName?.charAt(0) || 'U'}
             </div>
-            <div>
-              <p className="text-xs font-bold" style={{ color: 'var(--text)' }}>{userName}</p>
+            <div className="min-w-0">
+              <p className="text-xs font-bold truncate" style={{ color: 'var(--text)' }}>{userName}</p>
               <span className="badge badge-orange text-[10px]">{role}</span>
             </div>
           </div>
-          <button onClick={() => { localStorage.clear(); navigate('/auth'); }}
-            className="btn-danger w-full py-1.5 text-xs flex items-center justify-center gap-1.5">
-            <span className="material-symbols-outlined text-[16px]">logout</span>
-            Sign Out
-          </button>
+          <div className="space-y-1">
+            <button onClick={handleLogout}
+              className="btn-secondary w-full py-1.5 text-xs flex items-center justify-center gap-1.5"
+              style={{ color: 'var(--red)', borderColor: 'var(--red)' }}>
+              <span className="material-symbols-outlined text-[16px]">logout</span>
+              Logout
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -166,6 +192,11 @@ export default function Dashboard() {
             {stats?.teamInfo && (
               <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>
                 Workspace: <span className="font-semibold" style={{ color: 'var(--orange)' }}>{stats.teamInfo.name}</span>
+                {(role === 'MANAGER' || role === 'ADMIN') && stats.teamInfo.invite_code && (
+                  <span className="ml-4 font-mono text-[11px] uppercase tracking-wider" style={{ color: 'var(--text2)', background: 'var(--surface3)', padding: '3px 8px', borderRadius: '6px', border: '1px solid var(--divider)' }}>
+                    Team Code: <span className="font-bold" style={{ color: 'var(--teal)' }}>{stats.teamInfo.invite_code}</span>
+                  </span>
+                )}
               </p>
             )}
           </div>

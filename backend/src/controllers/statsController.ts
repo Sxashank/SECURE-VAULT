@@ -77,7 +77,8 @@ export const getDashboardStats = async (req: AuthRequest, res: Response): Promis
             totalDocs,
             categories,
             teamInfo,
-            teamMembers
+            teamMembers,
+            user: req.user
         });
     } catch (err) {
         console.error(err);
