@@ -61,11 +61,16 @@ export const signup = async (req: Request, res: Response): Promise<void> => {
         }
 
         const userRes = await pool.query(
-            'INSERT INTO users (full_name, email, password_hash, role_id, team_id, department_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-            [fullName, email, passwordHash, roleId, finalTeamId, deptId]
+            'INSERT INTO users (full_name, email, password_hash, role_id, department_id) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+            [fullName, email, passwordHash, roleId, deptId]
         );
 
         const userId = userRes.rows[0].id;
+        
+        if (finalTeamId) {
+            await pool.query('INSERT INTO user_teams (user_id, team_id, role_id) VALUES ($1, $2, $3)', [userId, finalTeamId, roleId]);
+        }
+
         await logAction(userId, 'SIGNUP_SUCCESS', null, req.ip || 'unknown');
 
         res.status(201).json({ message: 'User created successfully', userId });
@@ -86,7 +91,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
 
     try {
         const userRes = await pool.query(
-            'SELECT users.id, users.password_hash, users.full_name, users.team_id, roles.name as role_name, roles.id as role_id FROM users JOIN roles ON users.role_id = roles.id WHERE email = $1',
+            'SELECT users.id, users.password_hash, users.full_name, roles.name as role_name, roles.id as role_id FROM users JOIN roles ON users.role_id = roles.id WHERE email = $1',
             [email]
         );
 
@@ -110,7 +115,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
             email, 
             role_name: user.role_name, 
             role_id: user.role_id,
-            team_id: user.team_id,
             full_name: user.full_name
         });
         await logAction(user.id, 'LOGIN_SUCCESS', null, req.ip || 'unknown');
@@ -119,7 +123,6 @@ export const login = async (req: Request, res: Response): Promise<void> => {
             token, 
             role: user.role_name, 
             userId: user.id, 
-            teamId: user.team_id, 
             fullName: user.full_name 
         });
     } catch (err) {
@@ -140,10 +143,17 @@ export const joinTeam = async (req: AuthRequest, res: Response): Promise<void> =
             return; 
         }
         
-        await pool.query('UPDATE users SET team_id = $1 WHERE id = $2', [teamRes.rows[0].id, userId]);
+        // Give them a 'USER' role in this team by default
+        const roleRes = await pool.query("SELECT id FROM roles WHERE name = 'USER'");
+        const roleId = roleRes.rows[0].id;
+        
+        await pool.query(
+            'INSERT INTO user_teams (user_id, team_id, role_id) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', 
+            [userId, teamRes.rows[0].id, roleId]
+        );
         await logAction(userId, 'JOINED_TEAM', `team_${teamRes.rows[0].id}`, req.ip || 'unknown');
         
-        const userRes = await pool.query('SELECT users.id, users.email, users.full_name, users.team_id, roles.name as role_name, roles.id as role_id FROM users JOIN roles ON users.role_id = roles.id WHERE users.id = $1', [userId]);
+        const userRes = await pool.query('SELECT users.id, users.email, users.full_name, roles.name as role_name, roles.id as role_id FROM users JOIN roles ON users.role_id = roles.id WHERE users.id = $1', [userId]);
         const user = userRes.rows[0];
         
         const token = generateToken({ 
@@ -151,7 +161,6 @@ export const joinTeam = async (req: AuthRequest, res: Response): Promise<void> =
             email: user.email, 
             role_name: user.role_name, 
             role_id: user.role_id, 
-            team_id: user.team_id, 
             full_name: user.full_name 
         });
         

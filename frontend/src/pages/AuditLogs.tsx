@@ -33,11 +33,11 @@ export default function AuditLogs() {
   const isError = (action: string) => action.includes('FAILED') || action.includes('ERROR');
 
   return (
-    <div className="min-h-screen p-8 relative" style={{ background: 'var(--bg)' }}>
+    <div className="min-h-screen p-4 sm:p-8 relative" style={{ background: 'var(--bg)' }}>
       <OfficeBg />
       <div className="max-w-7xl mx-auto relative z-10 space-y-8">
 
-        <header className="flex items-center justify-between">
+        <header className="flex flex-col md:flex-row gap-4 md:items-center justify-between">
           <div className="flex items-center gap-4">
             <button onClick={() => navigate('/dashboard')} className="btn-secondary px-3 py-2.5 text-sm">
               <span className="material-symbols-outlined text-[18px]">arrow_back</span>
@@ -47,7 +47,7 @@ export default function AuditLogs() {
               <p className="text-sm" style={{ color: 'var(--muted)' }}>Immutable record of all system events</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-3 px-4 py-2.5 rounded-xl" style={{ background: 'var(--surface)', border: '1px solid var(--divider)' }}>
               <div className="live-dot" />
               <span className="text-sm font-semibold" style={{ color: 'var(--green)' }}>Live</span>
@@ -61,7 +61,7 @@ export default function AuditLogs() {
         </header>
 
         {/* Summary chips */}
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           {[
             { label: 'Total Events', val: logs.length, color: 'orange' },
             { label: 'Errors', val: logs.filter((l: any) => isError(l.action)).length, color: 'red' },
@@ -83,7 +83,8 @@ export default function AuditLogs() {
           <div className="px-6 py-4" style={{ borderBottom: '1px solid var(--divider)' }}>
             <SectionHead>Event Stream</SectionHead>
           </div>
-          <table className="w-full text-left">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left">
             <thead style={{ background: 'var(--surface3)' }}>
               <tr>
                 {['Timestamp','Action','User','IP Address','Resource'].map(h => (
@@ -112,6 +113,7 @@ export default function AuditLogs() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
 
       </div>

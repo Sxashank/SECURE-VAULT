@@ -16,17 +16,21 @@ export default function TeamInsights() {
     navigate('/auth');
   };
 
+  const [members, setMembers] = useState<any[]>([]);
+
   useEffect(() => {
     const fetchData = async () => {
       try {
         const token = await getToken();
         if (!token) return;
-        const [i, s] = await Promise.all([
+        const [i, s, stats] = await Promise.all([
           axios.get('http://127.0.0.1:5001/api/audit/team',      { headers: { Authorization: `Bearer ${token}` } }),
           axios.get('http://127.0.0.1:5001/api/audit/suspicious', { headers: { Authorization: `Bearer ${token}` } }),
+          axios.get('http://127.0.0.1:5001/api/stats/dashboard',  { headers: { Authorization: `Bearer ${token}` } }),
         ]);
         setInsights(i.data.insights || []);
         setSuspicious(s.data.alerts || []);
+        setMembers(stats.data.teamMembers || []);
       } catch (err) {
         console.error(err);
         navigate('/dashboard');
@@ -40,16 +44,16 @@ export default function TeamInsights() {
   const uniqueMembers = [...new Set(insights.map((i: any) => i.user_name))].filter(Boolean);
 
   return (
-    <div className="min-h-screen p-8 relative" style={{ background: 'var(--bg)' }}>
+    <div className="min-h-screen p-4 sm:p-8 relative" style={{ background: 'var(--bg)' }}>
       <OfficeBg />
       <div className="max-w-6xl mx-auto relative z-10 space-y-8">
 
-        <header className="flex items-center justify-between">
+        <header className="flex flex-col md:flex-row gap-4 md:items-center justify-between">
           <div>
             <h1 className="text-3xl font-black" style={{ fontFamily: 'var(--font-display)', color: 'var(--text)' }}>Team Insights</h1>
             <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>Forensic analysis and live activity streams for your team</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button onClick={() => navigate('/dashboard')} className="btn-secondary px-4 py-2.5 text-sm">
               <span className="material-symbols-outlined text-[18px]">arrow_back</span>
               Back to Dashboard
@@ -62,7 +66,7 @@ export default function TeamInsights() {
         </header>
 
         {/* Summary row */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           {[
             { label: 'Total Events', val: insights.length, icon: 'timeline', color: 'orange' },
             { label: 'Members Active', val: uniqueMembers.length, icon: 'group', color: 'teal' },
@@ -83,9 +87,9 @@ export default function TeamInsights() {
           ))}
         </div>
 
-        <div className="grid grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           {/* Activity feed */}
-          <div className="col-span-2 office-card overflow-hidden flex flex-col" style={{ height: '60vh' }}>
+          <div className="xl:col-span-2 office-card overflow-hidden flex flex-col" style={{ height: '60vh' }}>
             <div className="h-1 flex">
               {['var(--orange)','var(--amber)','var(--teal)','var(--green)'].map((c, i) => (
                 <div key={i} className="flex-1" style={{ background: c }} />
@@ -160,26 +164,56 @@ export default function TeamInsights() {
         </div>
 
         {/* Member activity breakdown */}
-        {uniqueMembers.length > 0 && (
+        {members.length > 0 && (
           <div className="office-card p-6">
             <SectionHead>Member Activity Breakdown</SectionHead>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-5">
-              {uniqueMembers.map((name: string, i) => {
-                const count = insights.filter((log: any) => log.user_name === name).length;
-                const pct   = Math.round((count / insights.length) * 100);
+              {members.map((member: any, i) => {
+                const name = member.full_name;
+                const userLogs = insights.filter((log: any) => log.user_id === member.id);
+                const count = userLogs.length;
+                const pct   = insights.length > 0 ? Math.round((count / insights.length) * 100) : 0;
+                const memberId = member.id;
+                const teamId = member.team_id;
+
                 return (
-                  <div key={name} className="rounded-xl p-4" style={{ background: 'var(--surface3)', border: '1px solid var(--border)' }}>
+                  <div key={`${memberId}-${teamId}`} className="rounded-xl p-4 relative flex flex-col" style={{ background: 'var(--surface3)', border: '1px solid var(--border)' }}>
                     <div className="flex items-center gap-2 mb-3">
                       <div className="w-8 h-8 rounded-lg flex items-center justify-center text-xs font-black text-white" style={{ background: avatarColors[i % avatarColors.length] }}>
-                        {name.charAt(0)}
+                        {name?.charAt(0)}
                       </div>
-                      <p className="text-xs font-bold truncate" style={{ color: 'var(--text)' }}>{name}</p>
+                      <div className="min-w-0">
+                        <p className="text-xs font-bold truncate" style={{ color: 'var(--text)' }}>{name}</p>
+                        <p className="text-[9px] uppercase tracking-wider truncate" style={{ color: 'var(--muted)' }}>{member.team_name}</p>
+                      </div>
                     </div>
                     <p className="text-xl font-black" style={{ fontFamily: 'var(--font-display)', color: 'var(--orange)' }}>{count}</p>
                     <p className="text-xs mt-1 mb-2" style={{ color: 'var(--muted)' }}>actions · {pct}% of total</p>
-                    <div className="prog-bar">
+                    <div className="prog-bar mb-2">
                       <div className="prog-fill" style={{ width: `${pct}%`, background: avatarColors[i % avatarColors.length] }} />
                     </div>
+                    {memberId && (
+                      <button 
+                        onClick={async () => {
+                          if (!window.confirm(`Are you sure you want to kick ${name} from ${member.team_name}?`)) return;
+                          try {
+                            const token = await getToken();
+                            await axios.post('http://127.0.0.1:5001/api/users/kick-member', { userIdToKick: memberId, teamId: teamId }, {
+                              headers: { Authorization: `Bearer ${token}` }
+                            });
+                            alert(`${name} has been kicked from ${member.team_name}.`);
+                            window.location.reload();
+                          } catch (err: any) {
+                            alert(err.response?.data?.message || 'Failed to kick user');
+                          }
+                        }}
+                        className="btn-secondary w-full py-1 mt-auto text-[10px] flex items-center justify-center gap-1"
+                        style={{ color: 'var(--red)', borderColor: 'var(--red)' }}
+                      >
+                        <span className="material-symbols-outlined text-[14px]">person_remove</span>
+                        Kick Member
+                      </button>
+                    )}
                   </div>
                 );
               })}

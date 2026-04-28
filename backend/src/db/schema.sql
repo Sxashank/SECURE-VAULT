@@ -36,9 +36,15 @@ CREATE TABLE IF NOT EXISTS users (
   email VARCHAR(255) UNIQUE NOT NULL,
   password_hash VARCHAR(255),
   role_id INT REFERENCES roles(id),
-  team_id INT REFERENCES teams(id) ON DELETE SET NULL,
   department_id INT REFERENCES departments(id) ON DELETE SET NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS user_teams (
+  user_id INT REFERENCES users(id) ON DELETE CASCADE,
+  team_id INT REFERENCES teams(id) ON DELETE CASCADE,
+  role_id INT REFERENCES roles(id) ON DELETE SET NULL,
+  PRIMARY KEY (user_id, team_id)
 );
 
 CREATE TABLE IF NOT EXISTS documents (
@@ -65,6 +71,8 @@ CREATE TABLE IF NOT EXISTS document_versions (
   document_id INT REFERENCES documents(id) ON DELETE CASCADE,
   version_number INT NOT NULL,
   encrypted_path VARCHAR(500) NOT NULL,
+  content TEXT,
+  commit_message VARCHAR(500),
   uploaded_by INT REFERENCES users(id) ON DELETE SET NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

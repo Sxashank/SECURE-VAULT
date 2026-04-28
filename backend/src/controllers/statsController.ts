@@ -5,8 +5,8 @@ import { logAction } from '../utils/audit';
 
 export const getDashboardStats = async (req: AuthRequest, res: Response): Promise<void> => {
     const userId = req.user?.id;
-    const teamId = req.user?.team_id;
     const roleName = req.user?.role_name;
+    const teamIds = req.user?.teams?.map((t: any) => t.team_id) || [];
 
     try {
         // 1. Today's Audits
@@ -15,38 +15,30 @@ export const getDashboardStats = async (req: AuthRequest, res: Response): Promis
 
         // 2. Active Members
         let membersQuery = 'SELECT COUNT(*) FROM users';
-        let membersParams = [];
+        let membersParams: any[] = [];
         if (roleName !== 'ADMIN') {
-            membersQuery += ' WHERE team_id = $1';
-            membersParams.push(teamId);
+            membersQuery = 'SELECT COUNT(DISTINCT user_id) FROM user_teams WHERE team_id = ANY($1::int[])';
+            membersParams.push(teamIds);
         }
         const membersRes = await pool.query(membersQuery, membersParams);
         const activeMembers = parseInt(membersRes.rows[0].count);
 
         // 3. Accessible Documents Count
         let docsQuery = 'SELECT COUNT(*) FROM documents';
-        let docsParams = [];
+        let docsParams: any[] = [];
         if (roleName !== 'ADMIN') {
-            docsQuery += ' WHERE team_id = $1';
-            docsParams.push(teamId);
-            if (roleName !== 'MANAGER') {
-                docsParams.push(userId);
-                docsQuery += ' AND (uploaded_by = $2 OR is_public_to_team = true OR id IN (SELECT document_id FROM document_permissions WHERE user_id = $2))';
-            }
+            docsQuery += ' WHERE (team_id = ANY($1::int[]) OR uploaded_by = $2 OR is_public_to_department = true OR id IN (SELECT document_id FROM document_permissions WHERE user_id = $2))';
+            docsParams = [teamIds, userId];
         }
         const docsRes = await pool.query(docsQuery, docsParams);
         const totalDocs = parseInt(docsRes.rows[0].count);
 
         // 4. Categories For Bar Graph
         let catQuery = 'SELECT category, COUNT(*) as count FROM documents';
-        let catParams = [];
+        let catParams: any[] = [];
         if (roleName !== 'ADMIN') {
-            catQuery += ' WHERE team_id = $1';
-            catParams.push(teamId);
-            if (roleName !== 'MANAGER') {
-                catParams.push(userId);
-                catQuery += ' AND (uploaded_by = $2 OR is_public_to_team = true OR id IN (SELECT document_id FROM document_permissions WHERE user_id = $2))';
-            }
+            catQuery += ' WHERE (team_id = ANY($1::int[]) OR uploaded_by = $2 OR is_public_to_department = true OR id IN (SELECT document_id FROM document_permissions WHERE user_id = $2))';
+            catParams = [teamIds, userId];
         }
         catQuery += ' GROUP BY category';
         const catRes = await pool.query(catQuery, catParams);
@@ -54,19 +46,23 @@ export const getDashboardStats = async (req: AuthRequest, res: Response): Promis
         const categories = catRes.rows.map(r => ({ name: r.category, value: parseInt(r.count) }));
 
         // 5. Team Context & Members
-        let teamInfo = null;
+        let teams: any[] = [];
         let teamMembers: any[] = [];
         
-        if (teamId) {
-            const teamRes = await pool.query('SELECT name, invite_code FROM teams WHERE id = $1', [teamId]);
-            if (teamRes.rows.length > 0) {
-                teamInfo = teamRes.rows[0];
-            }
+        if (teamIds.length > 0) {
+            const teamRes = await pool.query('SELECT id, name, invite_code FROM teams WHERE id = ANY($1::int[])', [teamIds]);
+            teams = teamRes.rows;
             
-            if (roleName === 'MANAGER' || roleName === 'ADMIN') {
-                const memRes = await pool.query('SELECT id, full_name, email, role_id, created_at FROM users WHERE team_id = $1 ORDER BY created_at DESC', [teamId]);
-                teamMembers = memRes.rows;
-            }
+            // Fetch members of all user's teams and include their team_id
+            const memRes = await pool.query(`
+                SELECT u.id, u.full_name, u.email, ut.role_id, ut.team_id, t.name as team_name, u.created_at 
+                FROM users u
+                JOIN user_teams ut ON u.id = ut.user_id
+                JOIN teams t ON ut.team_id = t.id
+                WHERE ut.team_id = ANY($1::int[])
+                ORDER BY u.created_at DESC
+            `, [teamIds]);
+            teamMembers = memRes.rows;
         }
 
         await logAction(userId, 'DASHBOARD_STATS_VIEW', null, req.ip || 'unknown');
@@ -76,7 +72,7 @@ export const getDashboardStats = async (req: AuthRequest, res: Response): Promis
             activeMembers,
             totalDocs,
             categories,
-            teamInfo,
+            teams,
             teamMembers,
             user: req.user
         });

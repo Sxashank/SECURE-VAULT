@@ -11,6 +11,6 @@ echo Starting Frontend UI...
 start "Frontend Server" cmd /k "cd frontend && npm run dev"
 
 echo Both servers are launching in separate windows!
-echo Once they are ready, access the UI at http://localhost:5176
+echo Once they are ready, access the UI at http://localhost:5200
 echo.
 pause

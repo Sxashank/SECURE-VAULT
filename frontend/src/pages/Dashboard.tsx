@@ -1,8 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { useUser, useAuth, useClerk } from '@clerk/clerk-react';
 import { OfficeBg, Badge, StatCard, SectionHead } from '../components/ui';
+import CryptoJS from 'crypto-js';
+
+const ENCRYPTION_KEY = import.meta.env.VITE_ENCRYPTION_KEY || 'default-secure-vault-e2e-key';
 
 export default function Dashboard() {
   const [documents, setDocuments] = useState<any[]>([]);
@@ -16,11 +19,38 @@ export default function Dashboard() {
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [assignedUsers, setAssignedUsers] = useState<any[]>([]);
   const [joinCode, setJoinCode]   = useState('');
+  
+  // Editor & Logs State
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editorDocId, setEditorDocId] = useState<number | null>(null);
+  const [editorTitle, setEditorTitle] = useState('');
+  const [editorContent, setEditorContent] = useState('');
+  const [editorVersion, setEditorVersion] = useState(1);
+  const [editorAccess, setEditorAccess] = useState('READ');
+  const [editorCommitMsg, setEditorCommitMsg] = useState('');
+  
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [logsData, setLogsData] = useState<any[]>([]);
+
   const navigate = useNavigate();
 
   const { user } = useUser();
   const { getToken } = useAuth();
   const { signOut } = useClerk();
+
+  const handleLeaveTeam = async () => {
+    if (!window.confirm('Are you sure you want to leave your team?')) return;
+    try {
+      const token = await getToken();
+      await axios.post('http://127.0.0.1:5001/api/users/leave-team', {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      alert('Left team successfully');
+      window.location.reload();
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to leave team');
+    }
+  };
 
   const handleLogout = async () => {
     await signOut();
@@ -30,6 +60,27 @@ export default function Dashboard() {
   // Local state for synced DB user data (role, etc)
   const [localUser, setLocalUser] = useState<any>(null);
 
+  const fetchData = useCallback(async () => {
+    if (!user) return; // Wait for Clerk to load the user object
+
+    try {
+      const token = await getToken();
+      if (!token) return;
+
+      const [docR, statR] = await Promise.all([
+        axios.get('http://127.0.0.1:5001/api/documents', { headers: { Authorization: `Bearer ${token}` } }),
+        axios.get('http://127.0.0.1:5001/api/stats/dashboard', { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      setDocuments(docR.data.documents);
+      setStats(statR.data);
+      if (statR.data.user) {
+        setLocalUser(statR.data.user);
+      }
+    } catch (e) {
+      console.error('Dashboard Fetch Error:', e);
+    }
+  }, [user, getToken]);
+
   useEffect(() => {
     if (!searchQuery) { setSearchResults([]); return; }
     const t = setTimeout(async () => {
@@ -37,35 +88,16 @@ export default function Dashboard() {
         const token = await getToken();
         const r = await axios.get(`http://127.0.0.1:5001/api/users/search?q=${searchQuery}`, { headers: { Authorization: `Bearer ${token}` } });
         setSearchResults(r.data.users);
-      } catch {}
+      } catch (err) {
+        console.error('User search failed:', err);
+      }
     }, 300);
     return () => clearTimeout(t);
   }, [searchQuery, getToken]);
 
   useEffect(() => {
-    if (!user) return; // Wait for Clerk to load the user object
-
-    const fetchData = async () => {
-      try {
-        const token = await getToken();
-        if (!token) return;
-
-        const [docR, statR] = await Promise.all([
-          axios.get('http://127.0.0.1:5001/api/documents', { headers: { Authorization: `Bearer ${token}` } }),
-          axios.get('http://127.0.0.1:5001/api/stats/dashboard', { headers: { Authorization: `Bearer ${token}` } }),
-        ]);
-        setDocuments(docR.data.documents);
-        setStats(statR.data);
-        if (statR.data.user) {
-          setLocalUser(statR.data.user);
-        }
-      } catch (e) {
-        console.error('Dashboard Fetch Error:', e);
-      }
-    };
-
     fetchData();
-  }, [user, getToken]);
+  }, [fetchData]);
 
   const addUser = (u: any, access: string) => {
     if (!assignedUsers.find(x => x.id === u.id)) setAssignedUsers([...assignedUsers, { id: u.id, name: u.full_name, access }]);
@@ -86,13 +118,85 @@ export default function Dashboard() {
     e.preventDefault();
     try {
       const token = await getToken();
+      
+      let content = '';
+      if (selectedFile) {
+        const text = await selectedFile.text();
+        content = CryptoJS.AES.encrypt(text, ENCRYPTION_KEY).toString();
+      }
+
       await axios.post('http://127.0.0.1:5001/api/documents/upload', {
         title: newTitle || selectedFile?.name || 'Untitled',
         encrypted_path: 'vault/' + Date.now() + '_' + (selectedFile?.name || 'file.enc'),
+        content,
         category: newCategory, scope_type: scopeType, assigned_users: assignedUsers
       }, { headers: { Authorization: `Bearer ${token}` } });
       setUploadOpen(false); setNewTitle(''); setSelectedFile(null); setAssignedUsers([]); fetchData();
-    } catch { alert('Upload failed.'); }
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Upload failed.');
+    }
+  };
+
+  const handleOpenEditor = async (doc: any) => {
+    try {
+      const token = await getToken();
+      const r = await axios.get(`http://127.0.0.1:5001/api/documents/${doc.id}/content`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      
+      let decrypted = '';
+      if (r.data.content) {
+        try {
+          const bytes = CryptoJS.AES.decrypt(r.data.content, ENCRYPTION_KEY);
+          decrypted = bytes.toString(CryptoJS.enc.Utf8);
+          // If decryption fails (e.g., old unencrypted data), it might return empty string
+          if (!decrypted) decrypted = r.data.content;
+        } catch (e) {
+          decrypted = r.data.content;
+        }
+      }
+
+      setEditorDocId(doc.id);
+      setEditorTitle(doc.title);
+      setEditorContent(decrypted);
+      setEditorVersion(r.data.version);
+      setEditorAccess(r.data.access);
+      setEditorCommitMsg('');
+      setEditorOpen(true);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to open file');
+    }
+  };
+
+  const handleSaveEdit = async () => {
+    if (!editorCommitMsg.trim()) { alert('Please provide a commit message.'); return; }
+    try {
+      const token = await getToken();
+      const encryptedContent = CryptoJS.AES.encrypt(editorContent, ENCRYPTION_KEY).toString();
+      
+      await axios.post(`http://127.0.0.1:5001/api/documents/${editorDocId}/versions`, {
+        content: encryptedContent,
+        commit_message: editorCommitMsg
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      setEditorOpen(false);
+      fetchData();
+      alert('Version committed successfully!');
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to save changes');
+    }
+  };
+
+  const handleOpenLogs = async (docId: number) => {
+    try {
+      const token = await getToken();
+      const r = await axios.get(`http://127.0.0.1:5001/api/documents/${docId}/logs`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setLogsData(r.data.logs);
+      setLogsOpen(true);
+    } catch (err: any) {
+      alert(err.response?.data?.message || 'Failed to fetch logs');
+    }
   };
 
   const handleDelete = async (id: number) => {
@@ -124,7 +228,7 @@ export default function Dashboard() {
       <OfficeBg />
 
       {/* Sidebar */}
-      <aside className="sidebar fixed left-0 top-0 h-screen w-60 z-40 flex flex-col py-6 px-3">
+      <aside className="sidebar fixed left-0 top-0 h-screen w-60 z-40 hidden lg:flex flex-col py-6 px-3">
         {/* Logo */}
         <div className="flex items-center gap-3 px-3 mb-8">
           <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'var(--orange)' }}>
@@ -138,7 +242,7 @@ export default function Dashboard() {
 
         {/* Color strip */}
         <div className="color-strip px-3 mb-6">
-          {[['var(--orange)', 'flex-[2]'], ['var(--green)', 'flex-[1.5]'], ['var(--amber)', 'flex-1'], ['var(--teal)', 'flex-1'], ['var(--red)', 'flex-1']].map(([c, f], i) => (
+          {['var(--orange)', 'var(--green)', 'var(--amber)', 'var(--teal)', 'var(--red)'].map((c, i) => (
             <span key={i} style={{ background: c, flexGrow: 1, height: '3px', borderRadius: '2px' }} />
           ))}
         </div>
@@ -166,6 +270,11 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="space-y-1">
+            <button onClick={handleLeaveTeam}
+              className="btn-secondary w-full py-1.5 text-xs flex items-center justify-center gap-1.5 mb-1">
+              <span className="material-symbols-outlined text-[16px]">person_remove</span>
+              Leave Team
+            </button>
             <button onClick={handleLogout}
               className="btn-secondary w-full py-1.5 text-xs flex items-center justify-center gap-1.5"
               style={{ color: 'var(--red)', borderColor: 'var(--red)' }}>
@@ -177,34 +286,48 @@ export default function Dashboard() {
       </aside>
 
       {/* Main */}
-      <main className="ml-60 flex-1 px-8 pt-8 pb-16 relative z-10">
+      <main className="lg:ml-60 flex-1 px-4 sm:px-6 lg:px-8 pt-6 lg:pt-8 pb-16 relative z-10 min-w-0">
 
         {/* Header */}
-        <div className="flex justify-between items-start mb-8">
+        <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-8">
           <div>
+            <div className="flex items-center gap-3 mb-4 lg:hidden">
+              <div className="w-9 h-9 rounded-xl flex items-center justify-center" style={{ background: 'var(--orange)' }}>
+                <span className="material-symbols-outlined text-white text-[20px]">security</span>
+              </div>
+              <div>
+                <p className="font-black text-sm tracking-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--text)' }}>SecureVault</p>
+                <p className="text-[10px] font-medium" style={{ color: 'var(--muted2)' }}>Enterprise Edition</p>
+              </div>
+            </div>
             <div className="flex items-center gap-2 mb-1">
               <div className="live-dot" />
               <span className="text-xs font-semibold uppercase tracking-widest" style={{ color: 'var(--green)', fontFamily: 'var(--font-mono)' }}>System Online</span>
             </div>
-            <h1 className="text-3xl font-black" style={{ fontFamily: 'var(--font-display)', color: 'var(--text)' }}>
+            <h1 className="text-3xl sm:text-4xl font-black leading-tight" style={{ fontFamily: 'var(--font-display)', color: 'var(--text)' }}>
               Good morning, {userName?.split(' ')[0]} 👋
             </h1>
-            {stats?.teamInfo && (
-              <p className="text-sm mt-1" style={{ color: 'var(--muted)' }}>
-                Workspace: <span className="font-semibold" style={{ color: 'var(--orange)' }}>{stats.teamInfo.name}</span>
-                {(role === 'MANAGER' || role === 'ADMIN') && stats.teamInfo.invite_code && (
-                  <span className="ml-4 font-mono text-[11px] uppercase tracking-wider" style={{ color: 'var(--text2)', background: 'var(--surface3)', padding: '3px 8px', borderRadius: '6px', border: '1px solid var(--divider)' }}>
-                    Team Code: <span className="font-bold" style={{ color: 'var(--teal)' }}>{stats.teamInfo.invite_code}</span>
-                  </span>
-                )}
-              </p>
+            {stats?.teams && stats.teams.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2 items-center">
+                <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: 'var(--muted)' }}>Workspaces:</span>
+                {stats.teams.map((t: any) => (
+                  <div key={t.id} className="flex items-center gap-2 px-3 py-1.5 rounded-lg" style={{ background: 'var(--surface3)', border: '1px solid var(--border)' }}>
+                    <span className="font-semibold text-sm" style={{ color: 'var(--orange)' }}>{t.name}</span>
+                    {(role === 'MANAGER' || role === 'ADMIN') && t.invite_code && (
+                      <span className="font-mono text-[10px] uppercase tracking-wider px-2 py-0.5 rounded" style={{ color: 'var(--teal)', background: 'var(--bg)', border: '1px solid var(--divider)' }}>
+                        {t.invite_code}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 w-full sm:w-auto mt-4 sm:mt-0">
             <button className="btn-secondary px-4 py-2.5 text-sm">
               <span className="material-symbols-outlined text-[18px]">notifications</span>
             </button>
-            <button onClick={() => setUploadOpen(true)} className="btn-primary px-5 py-2.5 text-sm">
+            <button onClick={() => setUploadOpen(true)} className="btn-primary px-5 py-2.5 text-sm flex-1 sm:flex-none justify-center">
               <span className="material-symbols-outlined text-[18px]">cloud_upload</span>
               Upload File
             </button>
@@ -212,8 +335,8 @@ export default function Dashboard() {
         </div>
 
         {/* Join team banner */}
-        {stats && !stats.teamInfo && (
-          <div className="office-card p-5 mb-8 flex flex-col md:flex-row items-center justify-between gap-4" style={{ borderLeft: '4px solid var(--amber)', background: 'var(--amber-bg)' }}>
+        {stats && (!stats.teams || stats.teams.length === 0) && (
+          <div className="office-card p-5 mb-8 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4" style={{ borderLeft: '4px solid var(--amber)', background: 'var(--amber-bg)' }}>
             <div className="flex items-center gap-3">
               <div className="icon-box" style={{ background: 'rgba(217,119,6,0.15)' }}>
                 <span className="material-symbols-outlined" style={{ color: 'var(--amber)' }}>group_add</span>
@@ -223,24 +346,24 @@ export default function Dashboard() {
                 <p className="text-xs" style={{ color: 'var(--muted)' }}>Join a team to collaborate and share documents.</p>
               </div>
             </div>
-            <form onSubmit={handleJoinTeam} className="flex gap-2">
-              <input type="text" placeholder="Enter team code" value={joinCode} onChange={e => setJoinCode(e.target.value)} required className="office-input px-4 py-2 text-sm w-40" style={{ fontFamily: 'var(--font-mono)' }} />
+            <form onSubmit={handleJoinTeam} className="flex flex-col sm:flex-row gap-2 md:max-w-md w-full md:w-auto">
+              <input type="text" placeholder="Enter team code" value={joinCode} onChange={e => setJoinCode(e.target.value)} required className="office-input px-4 py-2 text-sm sm:w-56" style={{ fontFamily: 'var(--font-mono)' }} />
               <button type="submit" className="btn-primary px-5 py-2 text-sm whitespace-nowrap">Join →</button>
             </form>
           </div>
         )}
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-5 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
           <StatCard icon="enhanced_encryption" label="Encrypted Docs" value={stats?.totalDocs || 0} sub="Secured in vault" color="orange" cardColor="orange" />
           <StatCard icon="group" label="Active Members" value={stats?.activeMembers || 1} sub="Currently linked" color="teal" cardColor="teal" />
           <StatCard icon="verified_user" label="System Integrity" value="99.98%" sub="Last audit: Today" color="green" cardColor="green" />
         </div>
 
         {/* Charts row */}
-        <div className="grid grid-cols-12 gap-5 mb-8">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-5 mb-8">
           {/* Bar chart */}
-          <div className="col-span-8 office-card p-6">
+          <div className="xl:col-span-8 office-card p-5 sm:p-6">
             <SectionHead action={
               <select className="office-input px-3 py-1.5 text-xs" style={{ width: 'auto' }}>
                 <option>Last 30 Days</option>
@@ -265,7 +388,7 @@ export default function Dashboard() {
           </div>
 
           {/* Security panel */}
-          <div className="col-span-4 office-card p-6 flex flex-col gap-5">
+          <div className="xl:col-span-4 office-card p-5 sm:p-6 flex flex-col gap-5">
             <div className="section-head">Security Status</div>
             {[
               { label: 'Unauthorized Access', pct: 5,  color: 'var(--red)',    badge: 'Low', bColor: 'red' },
@@ -294,14 +417,15 @@ export default function Dashboard() {
 
         {/* Document table */}
         <div className="office-card overflow-hidden">
-          <div className="px-6 py-4 flex justify-between items-center" style={{ borderBottom: '1px solid var(--divider)' }}>
+          <div className="px-4 sm:px-6 py-4 flex flex-col sm:flex-row gap-3 justify-between items-start sm:items-center" style={{ borderBottom: '1px solid var(--divider)' }}>
             <SectionHead>Document Registry</SectionHead>
             <button onClick={() => setUploadOpen(true)} className="btn-primary px-4 py-2 text-sm">
               <span className="material-symbols-outlined text-[18px]">add</span>
               New Document
             </button>
           </div>
-          <table className="w-full text-left">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[760px] text-left">
             <thead style={{ background: 'var(--surface3)' }}>
               <tr>
                 {['Document', 'Category', 'Uploader', 'Access', 'Date', ''].map((h, i) => (
@@ -339,7 +463,15 @@ export default function Dashboard() {
                   <td className="px-6 py-4 text-xs" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>
                     {new Date(doc.created_at).toLocaleDateString()}
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-6 py-4 text-right flex gap-2 justify-end">
+                    {doc.uploader === userName && (
+                      <button onClick={() => handleOpenLogs(doc.id)} className="p-2 rounded-lg hover:bg-stone-100 transition-colors" title="View Activity Logs">
+                        <span className="material-symbols-outlined text-[18px]" style={{ color: 'var(--amber)' }}>history</span>
+                      </button>
+                    )}
+                    <button onClick={() => handleOpenEditor(doc)} className="p-2 rounded-lg hover:bg-stone-100 transition-colors" title="Open Document">
+                      <span className="material-symbols-outlined text-[18px]" style={{ color: 'var(--teal)' }}>open_in_new</span>
+                    </button>
                     <button onClick={() => handleDelete(doc.id)} className="p-2 rounded-lg hover:bg-stone-100 transition-colors" title="Delete Document">
                       <span className="material-symbols-outlined text-[18px]" style={{ color: 'var(--red)' }}>delete</span>
                     </button>
@@ -348,6 +480,7 @@ export default function Dashboard() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       </main>
 
@@ -452,6 +585,84 @@ export default function Dashboard() {
           </div>
         </div>
       )}
+      {/* Editor Modal */}
+      {editorOpen && (
+        <div className="modal-bg fixed inset-0 flex items-center justify-center p-4 z-[100]">
+          <div className="office-card w-full max-w-2xl flex flex-col" style={{ height: '80vh' }}>
+            <div className="p-6 flex justify-between items-center" style={{ borderBottom: '1px solid var(--divider)' }}>
+              <div className="flex items-center gap-3">
+                <div className="icon-box" style={{ background: 'var(--teal-bg)' }}>
+                  <span className="material-symbols-outlined text-[20px]" style={{ color: 'var(--teal)' }}>edit_document</span>
+                </div>
+                <div>
+                  <h3 className="font-black text-base" style={{ fontFamily: 'var(--font-display)' }}>{editorTitle}</h3>
+                  <p className="text-xs" style={{ color: 'var(--muted)' }}>Version {editorVersion} · Access: {editorAccess}</p>
+                </div>
+              </div>
+              <button onClick={() => setEditorOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-stone-100 transition-colors" style={{ color: 'var(--muted)' }}>
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+            <div className="flex-1 p-6 flex flex-col overflow-hidden">
+              <textarea
+                value={editorContent}
+                onChange={e => setEditorContent(e.target.value)}
+                disabled={editorAccess === 'READ'}
+                className="office-input flex-1 p-4 resize-none font-mono text-sm"
+                style={{ background: editorAccess === 'READ' ? 'var(--surface3)' : '#fff' }}
+                placeholder="File contents here..."
+              />
+            </div>
+            {editorAccess !== 'READ' && (
+              <div className="p-6" style={{ borderTop: '1px solid var(--divider)', background: 'var(--surface2)' }}>
+                <label className="block text-xs font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>Commit Message</label>
+                <div className="flex gap-3">
+                  <input type="text" value={editorCommitMsg} onChange={e => setEditorCommitMsg(e.target.value)} placeholder="e.g., Updated section 4" className="office-input px-4 py-2 text-sm flex-1" />
+                  <button onClick={handleSaveEdit} className="btn-primary px-5 py-2 text-sm">Commit Changes</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Logs Modal */}
+      {logsOpen && (
+        <div className="modal-bg fixed inset-0 flex items-center justify-center p-4 z-[100]">
+          <div className="office-card w-full max-w-xl flex flex-col" style={{ maxHeight: '80vh' }}>
+            <div className="p-6 flex justify-between items-center" style={{ borderBottom: '1px solid var(--divider)' }}>
+              <div className="flex items-center gap-3">
+                <div className="icon-box" style={{ background: 'var(--amber-bg)' }}>
+                  <span className="material-symbols-outlined text-[20px]" style={{ color: 'var(--amber)' }}>history</span>
+                </div>
+                <div>
+                  <h3 className="font-black text-base" style={{ fontFamily: 'var(--font-display)' }}>Document Activity</h3>
+                  <p className="text-xs" style={{ color: 'var(--muted)' }}>Full audit trail for this file</p>
+                </div>
+              </div>
+              <button onClick={() => setLogsOpen(false)} className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-stone-100 transition-colors" style={{ color: 'var(--muted)' }}>
+                <span className="material-symbols-outlined text-[20px]">close</span>
+              </button>
+            </div>
+            <div className="p-6 overflow-y-auto space-y-3">
+              {logsData.length === 0 ? (
+                <p className="text-center text-sm" style={{ color: 'var(--muted)' }}>No activity found.</p>
+              ) : (
+                logsData.map((log, i) => (
+                  <div key={i} className="flex items-center justify-between p-3 rounded-xl" style={{ border: '1px solid var(--divider)' }}>
+                    <div>
+                      <p className="text-sm font-bold" style={{ color: 'var(--text)' }}>{log.full_name}</p>
+                      <p className="text-xs" style={{ color: 'var(--muted)', fontFamily: 'var(--font-mono)' }}>{new Date(log.timestamp).toLocaleString()}</p>
+                    </div>
+                    <Badge color={log.action === 'DOC_EDIT' ? 'orange' : 'teal'}>{log.action}</Badge>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

@@ -6,7 +6,12 @@ import { logAction } from '../utils/audit';
 export const uploadDocument = async (req: AuthRequest, res: Response): Promise<void> => {
     const { title, encrypted_path, category, scope_type, assigned_users } = req.body;
     const userId = req.user?.id;
-    const teamId = req.user?.team_id || null;
+    const teamId = req.body.team_id || (req.user?.teams && req.user.teams.length > 0 ? req.user.teams[0].team_id : null);
+
+    if (!userId) {
+        res.status(401).json({ message: 'Authenticated user was not found locally' });
+        return;
+    }
 
     if (!title || !encrypted_path) {
         res.status(400).json({ message: 'Title and path are required' });
@@ -21,8 +26,8 @@ export const uploadDocument = async (req: AuthRequest, res: Response): Promise<v
         const userRes = await client.query('SELECT department_id FROM users WHERE id = $1', [userId]);
         const deptId = userRes.rows[0]?.department_id || null;
 
-        const isPublicTeam = scope_type === 'TEAM';
-        const isPublicDept = scope_type === 'DEPARTMENT';
+        const isPublicTeam = scope_type === 'TEAM' && !!teamId;
+        const isPublicDept = scope_type === 'DEPARTMENT' && !!deptId;
 
         // 1. Insert Core Document
         const docRes = await client.query(
@@ -36,9 +41,9 @@ export const uploadDocument = async (req: AuthRequest, res: Response): Promise<v
         // 2. Insert Version 1
         await client.query(
             `INSERT INTO document_versions 
-            (document_id, version_number, encrypted_path, uploaded_by) 
-            VALUES ($1, $2, $3, $4)`,
-            [documentId, 1, encrypted_path, userId]
+            (document_id, version_number, encrypted_path, content, uploaded_by) 
+            VALUES ($1, $2, $3, $4, $5)`,
+            [documentId, 1, encrypted_path, req.body.content || '', userId]
         );
 
         // 3. Document Permissions Mapping
@@ -75,8 +80,6 @@ export const uploadDocument = async (req: AuthRequest, res: Response): Promise<v
 
 export const getDocuments = async (req: AuthRequest, res: Response): Promise<void> => {
     const userId = req.user?.id;
-    const teamId = req.user?.team_id;
-    const roleId = req.user?.role_id;
     const roleName = req.user?.role_name;
 
     try {
@@ -91,16 +94,18 @@ export const getDocuments = async (req: AuthRequest, res: Response): Promise<voi
         let values: any[] = [];
 
         if (roleName !== 'ADMIN') {
+            const teamIds = req.user?.teams?.map((t: any) => t.team_id) || [];
+            
             query += `
                 WHERE d.uploaded_by = $1
-                   OR (d.is_public_to_team = true AND d.team_id = $2)
+                   OR (d.is_public_to_team = true AND d.team_id = ANY($2::int[]))
                    OR (d.is_public_to_department = true AND d.department_id = $3)
                    OR EXISTS (
                        SELECT 1 FROM document_permissions dp 
                        WHERE dp.document_id = d.id AND dp.user_id = $1
                    )
             `;
-            values = [userId, teamId, deptId];
+            values = [userId, teamIds, deptId];
         }
 
         query += ' ORDER BY d.created_at DESC';
@@ -122,10 +127,10 @@ export const deleteDocument = async (req: AuthRequest, res: Response): Promise<v
     const roleName = req.user?.role_name;
 
     try {
-        // Validation: Must be ADMIN, the UPLOADER, or have DELETE permission
+        // Validation: Must be ADMIN, the UPLOADER, or have DELETE permission, or be a TEAM MANAGER
         if (roleName !== 'ADMIN') {
             const checkRes = await pool.query(`
-                SELECT uploaded_by FROM documents WHERE id = $1
+                SELECT uploaded_by, team_id FROM documents WHERE id = $1
             `, [documentId]);
             
             if (checkRes.rows.length === 0) {
@@ -133,9 +138,12 @@ export const deleteDocument = async (req: AuthRequest, res: Response): Promise<v
                 return;
             }
 
+            const docTeamId = checkRes.rows[0].team_id;
+            const userTeamRole = req.user?.teams?.find((t: any) => t.team_id === docTeamId)?.role_name;
+            const isTeamManager = userTeamRole === 'MANAGER' || userTeamRole === 'ADMIN';
             const isUploader = checkRes.rows[0].uploaded_by === userId;
             
-            if (!isUploader) {
+            if (!isUploader && !isTeamManager) {
                 const permRes = await pool.query(`
                     SELECT 1 FROM document_permissions 
                     WHERE document_id = $1 AND user_id = $2 AND access_type = 'DELETE'
@@ -155,5 +163,87 @@ export const deleteDocument = async (req: AuthRequest, res: Response): Promise<v
     } catch (err) {
         console.error("DELETE ERROR:", err);
         res.status(500).json({ message: 'Error deleting document' });
+    }
+};
+
+export const getDocumentContent = async (req: AuthRequest, res: Response): Promise<void> => {
+    const documentId = req.params.id;
+    const userId = req.user?.id || null;
+    try {
+        const docRes = await pool.query('SELECT uploaded_by FROM documents WHERE id = $1', [documentId]);
+        if (docRes.rows.length === 0) { res.status(404).json({ message: 'Not found' }); return; }
+        
+        const verRes = await pool.query('SELECT content, version_number FROM document_versions WHERE document_id = $1 ORDER BY version_number DESC LIMIT 1', [documentId]);
+        
+        await logAction(userId, 'DOC_VIEW', `doc_${documentId}`, req.ip || 'unknown');
+        
+        let access = 'READ';
+        if (docRes.rows[0].uploaded_by === userId || req.user?.role_name === 'ADMIN') {
+            access = 'OWNER';
+        } else {
+            const pRes = await pool.query("SELECT access_type FROM document_permissions WHERE document_id = $1 AND user_id = $2 AND access_type IN ('WRITE', 'DELETE')", [documentId, userId]);
+            if (pRes.rows.length > 0) access = 'WRITE';
+        }
+
+        res.json({ content: verRes.rows[0]?.content || '', version: verRes.rows[0]?.version_number || 1, access, uploaderId: docRes.rows[0].uploaded_by });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Error fetching content' });
+    }
+};
+
+export const commitDocumentVersion = async (req: AuthRequest, res: Response): Promise<void> => {
+    const documentId = req.params.id;
+    const { content, commit_message } = req.body;
+    const userId = req.user?.id || null;
+    try {
+        const docRes = await pool.query('SELECT uploaded_by FROM documents WHERE id = $1', [documentId]);
+        if (docRes.rows.length === 0) { res.status(404).json({ message: 'Not found' }); return; }
+        
+        if (docRes.rows[0].uploaded_by !== userId && req.user?.role_name !== 'ADMIN') {
+            const pRes = await pool.query("SELECT 1 FROM document_permissions WHERE document_id = $1 AND user_id = $2 AND access_type IN ('WRITE', 'DELETE')", [documentId, userId]);
+            if (pRes.rows.length === 0) { res.status(403).json({ message: 'Forbidden' }); return; }
+        }
+
+        const verRes = await pool.query('SELECT MAX(version_number) as max_v FROM document_versions WHERE document_id = $1', [documentId]);
+        const nextV = (verRes.rows[0].max_v || 0) + 1;
+
+        await pool.query(
+            `INSERT INTO document_versions (document_id, version_number, encrypted_path, content, commit_message, uploaded_by) 
+             VALUES ($1, $2, $3, $4, $5, $6)`,
+            [documentId, nextV, `vault/v${nextV}_${Date.now()}.enc`, content, commit_message || 'Update file', userId]
+        );
+
+        await logAction(userId, 'DOC_EDIT', `doc_${documentId}`, req.ip || 'unknown');
+        
+        res.json({ message: 'Version committed', version: nextV });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Error committing version' });
+    }
+};
+
+export const getDocumentLogs = async (req: AuthRequest, res: Response): Promise<void> => {
+    const documentId = req.params.id;
+    const userId = req.user?.id || null;
+    try {
+        const docRes = await pool.query('SELECT uploaded_by FROM documents WHERE id = $1', [documentId]);
+        if (docRes.rows.length === 0) { res.status(404).json({ message: 'Not found' }); return; }
+        if (docRes.rows[0].uploaded_by !== userId && req.user?.role_name !== 'ADMIN') {
+            res.status(403).json({ message: 'Only uploader or admin can view logs' }); return;
+        }
+
+        const logsRes = await pool.query(`
+            SELECT a.action, a.timestamp, u.full_name, u.email 
+            FROM audit_logs a
+            JOIN users u ON a.user_id = u.id
+            WHERE a.resource_id = $1
+            ORDER BY a.timestamp DESC
+        `, [`doc_${documentId}`]);
+        
+        res.json({ logs: logsRes.rows });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Error fetching logs' });
     }
 };

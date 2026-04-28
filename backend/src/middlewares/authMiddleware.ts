@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { clerkClient } from '@clerk/express';
+import { clerkClient, getAuth } from '@clerk/express';
 import { pool } from '../db';
 
 export interface AuthRequest extends Request {
@@ -8,8 +8,7 @@ export interface AuthRequest extends Request {
 }
 
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
-    // In @clerk/express, req.auth is populated by the middleware
-    const clerkId = (req as any).auth?.userId;
+    const clerkId = getAuth(req).userId;
 
     if (!clerkId) {
         res.status(401).json({ message: 'Unauthenticated' });
@@ -51,11 +50,21 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
             localUser = userRes.rows[0];
         }
 
-        // Attach local user details (role, team, etc) to request
+        // Attach local user details (role, etc) to request
         const roleRes = await pool.query('SELECT name FROM roles WHERE id = $1', [localUser.role_id]);
+        
+        // Fetch all teams the user belongs to, along with their roles in those teams
+        const teamsRes = await pool.query(`
+            SELECT ut.team_id, r.name as role_name 
+            FROM user_teams ut
+            JOIN roles r ON ut.role_id = r.id
+            WHERE ut.user_id = $1
+        `, [localUser.id]);
+
         req.user = {
             ...localUser,
-            role_name: roleRes.rows[0]?.name
+            role_name: roleRes.rows[0]?.name,
+            teams: teamsRes.rows // Array of { team_id, role_name }
         };
         
         next();
