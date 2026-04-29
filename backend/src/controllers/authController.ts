@@ -169,3 +169,40 @@ export const joinTeam = async (req: AuthRequest, res: Response): Promise<void> =
         res.status(500).json({message: 'Server error'}); 
     }
 };
+export const createTeam = async (req: AuthRequest, res: Response): Promise<void> => {
+    const { teamName, teamCode } = req.body;
+    const userId = req.user?.id;
+
+    console.log('CREATE TEAM ATTEMPT:', { teamName, teamCode, userId });
+    if (!teamName || !teamCode) {
+        res.status(400).json({ message: 'Team Name and Code are required' });
+        return;
+    }
+
+    try {
+        const newTeam = await pool.query(
+            'INSERT INTO teams (name, invite_code) VALUES ($1, $2) RETURNING id',
+            [teamName, teamCode]
+        );
+        const teamId = newTeam.rows[0].id;
+
+        // Automatically join the creator to the team as a MANAGER
+        const roleRes = await pool.query("SELECT id FROM roles WHERE name = 'MANAGER'");
+        const roleId = roleRes.rows[0].id;
+
+        await pool.query(
+            'INSERT INTO user_teams (user_id, team_id, role_id) VALUES ($1, $2, $3)',
+            [userId, teamId, roleId]
+        );
+
+        await logAction(userId, 'CREATED_TEAM', `team_${teamId}`, req.ip || 'unknown');
+        res.status(201).json({ message: 'Team created successfully', teamId, teamName });
+    } catch (err: any) {
+        if (err.code === '23505') {
+            res.status(409).json({ message: 'Team Code already in use' });
+            return;
+        }
+        console.error(err);
+        res.status(500).json({ message: 'Server error' });
+    }
+};

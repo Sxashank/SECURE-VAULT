@@ -77,3 +77,42 @@ export const kickMember = async (req: AuthRequest, res: Response): Promise<void>
         res.status(500).json({ message: 'Failed to kick member' });
     }
 };
+export const getAllUsers = async (req: AuthRequest, res: Response): Promise<void> => {
+    console.log('GET ALL USERS ATTEMPT:', { userId: req.user?.id, role: req.user?.role_name });
+    if (req.user?.role_name !== 'ADMIN') {
+        res.status(403).json({ message: 'Forbidden' });
+        return;
+    }
+    try {
+        const result = await pool.query(`
+            SELECT u.id, u.full_name, u.email, u.role_id, r.name as role_name, u.created_at
+            FROM users u
+            JOIN roles r ON u.role_id = r.id
+            ORDER BY u.created_at DESC
+        `);
+        res.json({ users: result.rows });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Failed to fetch users' });
+    }
+};
+
+export const updateUserRole = async (req: AuthRequest, res: Response): Promise<void> => {
+    if (req.user?.role_name !== 'ADMIN') {
+        res.status(403).json({ message: 'Forbidden' });
+        return;
+    }
+    const { userId, newRoleId } = req.body;
+    if (!userId || !newRoleId) {
+        res.status(400).json({ message: 'userId and newRoleId are required' });
+        return;
+    }
+
+    try {
+        await pool.query('UPDATE users SET role_id = $1 WHERE id = $2', [newRoleId, userId]);
+        res.json({ message: 'User role updated successfully' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Failed to update user role' });
+    }
+};

@@ -49,11 +49,25 @@ export const getDashboardStats = async (req: AuthRequest, res: Response): Promis
         let teams: any[] = [];
         let teamMembers: any[] = [];
         
-        if (teamIds.length > 0) {
+        if (roleName === 'ADMIN') {
+            const teamRes = await pool.query('SELECT id, name, invite_code FROM teams');
+            teams = teamRes.rows;
+        } else if (teamIds.length > 0) {
             const teamRes = await pool.query('SELECT id, name, invite_code FROM teams WHERE id = ANY($1::int[])', [teamIds]);
             teams = teamRes.rows;
-            
-            // Fetch members of all user's teams and include their team_id
+        }
+
+        // Fetch members of all user's teams and include their team_id
+        if (roleName === 'ADMIN') {
+            const memRes = await pool.query(`
+                SELECT u.id, u.full_name, u.email, ut.role_id, ut.team_id, t.name as team_name, u.created_at 
+                FROM users u
+                JOIN user_teams ut ON u.id = ut.user_id
+                JOIN teams t ON ut.team_id = t.id
+                ORDER BY u.created_at DESC
+            `);
+            teamMembers = memRes.rows;
+        } else if (teamIds.length > 0) {
             const memRes = await pool.query(`
                 SELECT u.id, u.full_name, u.email, ut.role_id, ut.team_id, t.name as team_name, u.created_at 
                 FROM users u

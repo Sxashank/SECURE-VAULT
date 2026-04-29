@@ -8,6 +8,7 @@ export interface AuthRequest extends Request {
 }
 
 export const authenticate = async (req: AuthRequest, res: Response, next: NextFunction): Promise<void> => {
+    console.log('AUTH CHECK:', req.method, req.url);
     const clerkId = getAuth(req).userId;
 
     if (!clerkId) {
@@ -36,15 +37,22 @@ export const authenticate = async (req: AuthRequest, res: Response, next: NextFu
                     [clerkId, email]
                 );
                 localUser = updatedUser.rows[0];
-                console.log(`Linked existing user ${email} to Clerk ID ${clerkId}`);
+                console.log(`Linked existing user ${email} (Role ID: ${localUser.role_id}) to Clerk ID ${clerkId}`);
             } else {
-                // Create new user, default to USER role (id 3)
+                // Create new user
+                // Check if they should be ADMIN based on email or if they are the first user
+                const userCountRes = await pool.query('SELECT COUNT(*) FROM users');
+                const isFirstUser = parseInt(userCountRes.rows[0].count) === 0;
+                const isAdminEmail = email === process.env.INITIAL_ADMIN_EMAIL;
+                
+                const roleId = (isFirstUser || isAdminEmail) ? 1 : 3; // 1 = ADMIN, 3 = USER
+
                 const newUser = await pool.query(
-                    'INSERT INTO users (clerk_id, full_name, email, role_id) VALUES ($1, $2, $3, 3) RETURNING *',
-                    [clerkId, fullName, email]
+                    'INSERT INTO users (clerk_id, full_name, email, role_id) VALUES ($1, $2, $3, $4) RETURNING *',
+                    [clerkId, fullName, email, roleId]
                 );
                 localUser = newUser.rows[0];
-                console.log(`Created new Clerk-synced user: ${email}`);
+                console.log(`Created new Clerk-synced user: ${email} with Role ID: ${roleId}`);
             }
         } else {
             localUser = userRes.rows[0];

@@ -21,9 +21,24 @@ const runCompatibilityMigrations = async () => {
 };
 
 const corsOptions = {
-  origin: ['http://localhost:5201', 'http://127.0.0.1:5201'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    const allowedOrigins = [
+      'http://localhost:5200',
+      'http://127.0.0.1:5200',
+      'http://localhost:5201',
+      'http://127.0.0.1:5201',
+      'http://localhost:5173', // Vite default
+      'http://127.0.0.1:5173'
+    ];
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Clerk-Auth-Token'],
+  credentials: true
 };
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '50mb' }));
@@ -34,6 +49,11 @@ app.get('/api/health', (req: Request, res: Response) => {
 });
 
 app.use(clerkMiddleware());
+
+app.use((req, res, next) => {
+  console.log('GLOBAL REQUEST:', req.method, req.url);
+  next();
+});
 
 app.use('/api/auth', authRoutes);
 app.use('/api/documents', documentRoutes);

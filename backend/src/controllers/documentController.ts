@@ -87,7 +87,7 @@ export const getDocuments = async (req: AuthRequest, res: Response): Promise<voi
         const deptId = userRes.rows[0]?.department_id;
 
         let query = `
-            SELECT d.id, d.title, d.category, d.is_public_to_team, d.is_public_to_department, d.created_at, u.full_name as uploader
+            SELECT d.id, d.title, d.category, d.is_public_to_team, d.is_public_to_department, d.team_id, d.created_at, u.full_name as uploader
             FROM documents d
             LEFT JOIN users u ON d.uploaded_by = u.id
         `;
@@ -98,7 +98,7 @@ export const getDocuments = async (req: AuthRequest, res: Response): Promise<voi
             
             query += `
                 WHERE d.uploaded_by = $1
-                   OR (d.is_public_to_team = true AND d.team_id = ANY($2::int[]))
+                   OR (d.team_id = ANY($2::int[]))
                    OR (d.is_public_to_department = true AND d.department_id = $3)
                    OR EXISTS (
                        SELECT 1 FROM document_permissions dp 
@@ -168,13 +168,21 @@ export const deleteDocument = async (req: AuthRequest, res: Response): Promise<v
 
 export const getDocumentContent = async (req: AuthRequest, res: Response): Promise<void> => {
     const documentId = req.params.id;
+    const version = req.query.version;
     const userId = req.user?.id || null;
     try {
         const docRes = await pool.query('SELECT uploaded_by FROM documents WHERE id = $1', [documentId]);
         if (docRes.rows.length === 0) { res.status(404).json({ message: 'Not found' }); return; }
         
-        const verRes = await pool.query('SELECT content, version_number FROM document_versions WHERE document_id = $1 ORDER BY version_number DESC LIMIT 1', [documentId]);
+        let verRes;
+        if (version) {
+            verRes = await pool.query('SELECT content, version_number FROM document_versions WHERE document_id = $1 AND version_number = $2', [documentId, version]);
+        } else {
+            verRes = await pool.query('SELECT content, version_number FROM document_versions WHERE document_id = $1 ORDER BY version_number DESC LIMIT 1', [documentId]);
+        }
         
+        if (verRes.rows.length === 0) { res.status(404).json({ message: 'Version not found' }); return; }
+
         await logAction(userId, 'DOC_VIEW', `doc_${documentId}`, req.ip || 'unknown');
         
         let access = 'READ';
@@ -189,6 +197,24 @@ export const getDocumentContent = async (req: AuthRequest, res: Response): Promi
     } catch (err) {
         console.error(err);
         res.status(500).json({ message: 'Error fetching content' });
+    }
+};
+
+export const getDocumentVersions = async (req: AuthRequest, res: Response): Promise<void> => {
+    const documentId = req.params.id;
+    try {
+        const verRes = await pool.query(`
+            SELECT dv.version_number, dv.commit_message, dv.created_at, u.full_name as author
+            FROM document_versions dv
+            LEFT JOIN users u ON dv.uploaded_by = u.id
+            WHERE dv.document_id = $1
+            ORDER BY dv.version_number DESC
+        `, [documentId]);
+        
+        res.json({ versions: verRes.rows });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ message: 'Error fetching versions' });
     }
 };
 
